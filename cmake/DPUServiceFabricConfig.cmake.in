@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+set(DPUServiceFabric_VERSION "@PROJECT_VERSION@")
+set(DPUServiceFabric_SEMANTIC_VERSION "@PROJECT_VERSION@")
+
+include("${CMAKE_CURRENT_LIST_DIR}/DPUServiceFabricTargets.cmake")
+
+check_required_components(DPUServiceFabric)

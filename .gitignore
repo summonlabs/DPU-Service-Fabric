@@ -1,0 +1,52 @@
+# Build trees
+/build/
+/out/
+/install/
+cmake-build-*/
+*.user
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+CTestTestfile.cmake
+cmake_install.cmake
+install_manifest.txt
+_deps/
+*.ninja
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+
+# Compiled artifacts
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.ipdb
+*.iobj
+*.gcda
+*.gcno
+*.gcov
+
+# Runtime debris: stores, journals, dumps, logs
+*.store
+*.journal
+*.log
+*.dmp
+*.tmp
+/dpuf-store/
+/**/dpuf-store/
+/dpuf-benchmark-store/
+/dpuf-benchmark-store-*/
+/consume/
+.sanitizer/
