@@ -7,7 +7,10 @@
 // this file crosses a real OS process boundary over a real TCP socket.
 
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "dpu/fabric/dpu_fabric.hpp"
@@ -297,6 +300,59 @@ DPUF_TEST(transport, shutdown_is_graceful_and_joinable) {
   DPUF_REQUIRE(reopened);
   DPUF_CHECK(reopened.value()->recovery().recovered_from_store);
   DPUF_CHECK_OK(reopened.value()->close());
+}
+
+DPUF_TEST(transport, a_second_server_cannot_take_a_listening_port) {
+  test::Scenario scenario{};
+  Result<std::unique_ptr<Server>> first = Server::create(scenario.rt(), ServerOptions{});
+  DPUF_REQUIRE(first);
+  DPUF_CHECK_OK(first.value()->listen());
+  DPUF_CHECK(first.value()->port() != 0);
+  Result<std::unique_ptr<Server>> second = Server::create(scenario.rt(), ServerOptions{});
+  DPUF_REQUIRE(second);
+  second.value()->set_endpoint("127.0.0.1", first.value()->port());
+  // Two fabrics must never share one listening port: the second bind fails.
+  DPUF_CHECK(!second.value()->listen().ok());
+}
+
+DPUF_TEST(transport, stop_does_not_wait_for_an_idle_client) {
+  test::Scenario scenario{};
+  Result<std::unique_ptr<Server>> server = Server::create(scenario.rt(), ServerOptions{});
+  DPUF_REQUIRE(server);
+  const Status listening = server.value()->listen();
+  DPUF_CHECK_OK(listening);
+  if (!listening.ok()) {
+    return;
+  }
+  std::promise<void> served;
+  std::future<void> done = served.get_future();
+  std::thread serving([&server, &served]() {
+    (void)server.value()->serve();
+    served.set_value();
+  });
+
+  // One completed request proves a worker serves this client; the worker then
+  // waits in a receive for the client's next frame.
+  ClientOptions options;
+  options.address = "127.0.0.1";
+  options.port = server.value()->port();
+  Result<std::unique_ptr<Client>> client = Client::connect(options);
+  const bool connected = static_cast<bool>(client);
+  const bool answered = connected && client.value()->ping("idle").has_value();
+
+  // Stopped with the client still connected and idle; closing the client
+  // afterwards releases a serve() that is still waiting on it.
+  server.value()->request_shutdown();
+  const bool returned = done.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+  if (connected) {
+    (void)client.value()->close();
+  }
+  serving.join();
+  DPUF_CHECK(connected);
+  DPUF_CHECK(answered);
+  // Stopping shut the connection down, which on Windows does not end a receive
+  // already waiting, so serve() joined the worker only once the client left.
+  DPUF_CHECK(returned);
 }
 
 }  // namespace

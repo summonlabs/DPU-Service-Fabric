@@ -103,9 +103,28 @@ Status close_file(std::FILE* handle) {
 
 Status atomic_replace(const std::string& from, const std::string& to) {
 #ifdef _WIN32
-  if (MoveFileExW(fs::path{from}.wstring().c_str(), fs::path{to}.wstring().c_str(),
-                  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
-    return refuse(ReasonCode::StoreIoFailure, "atomic replace failed");
+  // While a reader has the target open (an inspection of the store, an
+  // antivirus or indexing scan) the replace fails until the reader closes the
+  // file, so it is retried for a bounded time (about 2 s). A directory in the
+  // way is not transient and fails at once.
+  const std::wstring source = fs::path{from}.wstring();
+  const std::wstring target = fs::path{to}.wstring();
+  for (int attempt = 0;; ++attempt) {
+    if (MoveFileExW(source.c_str(), target.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0) {
+      break;
+    }
+    const DWORD error = GetLastError();
+    const DWORD attributes = GetFileAttributesW(target.c_str());
+    const bool directory =
+        attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    const bool transient = (error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION ||
+                            error == ERROR_LOCK_VIOLATION) &&
+                           !directory;
+    if (!transient || attempt >= 100) {
+      return refuse(ReasonCode::StoreIoFailure, "atomic replace failed");
+    }
+    Sleep(20);
   }
 #else
   std::error_code error;

@@ -2,10 +2,12 @@
 // corruption handling and the guarantee that a restart never revives liveness.
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "dpu/fabric/dpu_fabric.hpp"
@@ -486,6 +488,30 @@ DPUF_TEST(persistence, repeated_open_close_cycles_stay_stable) {
   DPUF_REQUIRE(runtime);
   DPUF_CHECK_OK(runtime.value()->close());
   DPUF_CHECK_OK(runtime.value()->close());
+}
+
+DPUF_TEST(persistence, checkpoint_waits_for_a_reader_of_the_snapshot) {
+  TempStore store{"snapshot-reader"};
+  Scenario scenario{store_config(store)};
+  DPUF_CHECK_RESULT_OK(test::apply_standard_world(scenario));
+  DPUF_CHECK_OK(scenario.rt().checkpoint());
+  bool reader_opened = false;
+  bool checkpointed = false;
+  {
+    // An inspection of the store holds the snapshot open while the next
+    // checkpoint replaces it, and closes it shortly after.
+    std::ifstream reader(store.file("fabric.snapshot"), std::ios::binary);
+    reader_opened = reader.is_open();
+    std::thread checkpointer(
+        [&scenario, &checkpointed] { checkpointed = scenario.rt().checkpoint().ok(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    reader.close();
+    checkpointer.join();
+  }
+  DPUF_CHECK(reader_opened);
+  // The replacement waits for the reader instead of failing the checkpoint.
+  DPUF_CHECK(checkpointed);
+  DPUF_CHECK_OK(scenario.rt().close());
 }
 
 }  // namespace

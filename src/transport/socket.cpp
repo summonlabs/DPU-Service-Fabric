@@ -60,8 +60,15 @@ Result<dpu_socket_t> listen_on(const std::string& address, std::uint16_t port) {
     return refuse(ReasonCode::TransportFailure, "socket() failed: " + last_error());
   }
   int reuse = 1;
+#if defined(_WIN32)
+  // SO_REUSEADDR on Windows lets a second socket bind a port that is still
+  // listening; exclusive use makes that second bind fail instead.
+  (void)::setsockopt(listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                     reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+#else
   (void)::setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse),
                      sizeof(reuse));
+#endif
   sockaddr_in endpoint{};
   endpoint.sin_family = AF_INET;
   endpoint.sin_port = htons(port);
@@ -185,6 +192,9 @@ Status shutdown_both(dpu_socket_t socket) {
   if (::shutdown(to_raw(socket), SD_BOTH) != 0) {
     return refuse(ReasonCode::TransportFailure, "shutdown() failed");
   }
+  // shutdown() does not end a recv() another thread is already blocked in on
+  // Windows; cancelling the socket's pending I/O does.
+  (void)::CancelIoEx(reinterpret_cast<HANDLE>(to_raw(socket)), nullptr);
 #else
   if (::shutdown(to_raw(socket), SHUT_RDWR) != 0) {
     return refuse(ReasonCode::TransportFailure, "shutdown() failed");
